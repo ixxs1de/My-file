@@ -1,0 +1,313 @@
+-- NexHub | Steal a Brainrot - Full Mobile-Friendly Version
+if getgenv().NexHubLoaded then return end
+getgenv().NexHubLoaded=true
+
+-- Services
+local Players=game:GetService("Players")
+local RunService=game:GetService("RunService")
+local UserInputService=game:GetService("UserInputService")
+local Workspace=game:GetService("Workspace")
+local LocalPlayer=Players.LocalPlayer
+local HttpService=game:GetService("HttpService")
+
+-- CFG
+local CFG_FILE="NexHubCFG.json"
+getgenv().CFG=getgenv().CFG or {
+    AirWalk=false, Float=false, FloorSteal=false, ESP=false, XRay=false
+}
+local CFG=getgenv().CFG
+
+-- File functions
+local function canFile() return type(writefile)=="function" and type(readfile)=="function" and type(isfile)=="function" end
+local function saveCFG() if not canFile() then return end pcall(function() writefile(CFG_FILE,HttpService:JSONEncode(CFG)) end) end
+local function loadCFG()
+    if not canFile() then return end
+    if not pcall(isfile,CFG_FILE) then return end
+    local ok,raw=pcall(readfile,CFG_FILE)
+    if ok and raw then
+        local ok2,dec=pcall(HttpService.JSONDecode,HttpService,raw)
+        if ok2 and type(dec)=="table" then for k,v in pairs(dec) do CFG[k]=v end end
+    end
+end
+loadCFG()
+spawn(function() while true do task.wait(10); saveCFG() end end)
+
+-- UI Helpers
+local function makeStroke(obj,color,thickness)
+    local s=Instance.new("UIStroke",obj)
+    s.Color=color or Color3.fromRGB(180,60,255)
+    s.Thickness=thickness or 1.2
+    return s
+end
+local function makeDraggable(frame,handle)
+    handle.Active=true
+    local dragging=false
+    local dragStart,startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            dragStart=input.Position
+            startPos=frame.Position
+            input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then dragging=false end end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
+            local delta=input.Position-dragStart
+            frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+        end
+    end)
+end
+
+-- Build UI
+if game.CoreGui:FindFirstChild("NexHubCore") then pcall(function() game.CoreGui.NexHubCore:Destroy() end) end
+local screen=Instance.new("ScreenGui",game.CoreGui)
+screen.Name="NexHubCore"; screen.ResetOnSpawn=false
+
+local BG,ACC=Color3.fromRGB(25,5,40), Color3.fromRGB(180,60,255)
+local main=Instance.new("Frame",screen)
+main.Name="Main"; main.Size=UDim2.new(0,320,0,380); main.Position=UDim2.new(0.5,-160,0.08,0); main.BackgroundColor3=BG
+Instance.new("UICorner",main).CornerRadius=UDim.new(0,12)
+makeStroke(main,ACC,1.2)
+
+-- Header
+local header=Instance.new("Frame",main)
+header.Size=UDim2.new(1,0,0,40); header.Position=UDim2.new(0,0,0,0); header.BackgroundColor3=ACC
+Instance.new("UICorner",header).CornerRadius=UDim.new(0,12)
+makeStroke(header,ACC,1.2)
+local title=Instance.new("TextLabel",header)
+title.Size=UDim2.new(1,-40,1,0); title.Position=UDim2.new(0,8,0,0); title.BackgroundTransparency=1
+title.Font=Enum.Font.GothamBold; title.TextSize=18; title.TextColor3=Color3.new(1,1,1)
+title.Text="NexHub | Steal a Brainrot"; title.TextXAlignment=Enum.TextXAlignment.Left
+local hideBtn=Instance.new("TextButton",header)
+hideBtn.Size=UDim2.new(0,32,1,0); hideBtn.Position=UDim2.new(1,-36,0,0)
+hideBtn.BackgroundTransparency=1; hideBtn.Font=Enum.Font.GothamBold; hideBtn.TextSize=22; hideBtn.TextColor3=Color3.new(1,1,1)
+hideBtn.Text="—"
+
+-- Tabs
+local tabs=Instance.new("Frame",main)
+tabs.Size=UDim2.new(1,0,0,36); tabs.Position=UDim2.new(0,0,0,40); tabs.BackgroundColor3=Color3.fromRGB(40,10,60)
+Instance.new("UICorner",tabs).CornerRadius=UDim.new(0,12)
+makeStroke(tabs,ACC,1)
+
+local btnMain=Instance.new("TextButton",tabs)
+btnMain.Size=UDim2.new(0.5,0,1,0); btnMain.Position=UDim2.new(0,0,0,0); btnMain.Text="Main"; btnMain.Font=Enum.Font.GothamBold; btnMain.TextSize=15; btnMain.TextColor3=Color3.new(1,1,1); btnMain.BackgroundTransparency=1
+local btnVisual=btnMain:Clone()
+btnVisual.Parent=tabs; btnVisual.Position=UDim2.new(0.5,0,0,0); btnVisual.Text="Visual"
+
+-- Content frame
+local content=Instance.new("Frame",main)
+content.Size=UDim2.new(1,0,1,-76); content.Position=UDim2.new(0,0,0,76); content.BackgroundTransparency=1
+
+-- Panels
+local mainPanel=Instance.new("Frame",content); mainPanel.Size=UDim2.new(1,0,1,0); mainPanel.BackgroundTransparency=1
+local visualPanel=Instance.new("Frame",content); visualPanel.Size=mainPanel.Size; visualPanel.Position=mainPanel.Position; visualPanel.BackgroundTransparency=1; visualPanel.Visible=false
+
+-- Behaviours table
+local behaviours={}
+
+-- Toggle helper
+local function makeToggle(parent,label,cfgKey,posY)
+    local btn=Instance.new("TextButton",parent)
+    btn.Size=UDim2.new(0.9,0,0,32); btn.Position=UDim2.new(0.05,0,0,posY); btn.BackgroundColor3=Color3.fromRGB(55,12,80)
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,12)
+    makeStroke(btn,ACC,1)
+    btn.Font=Enum.Font.GothamBold; btn.TextSize=14; btn.TextColor3=Color3.new(1,1,1)
+    btn.Text=label.." ["..(CFG[cfgKey] and "ON" or "OFF").."]"
+    btn.MouseButton1Click:Connect(function()
+        CFG[cfgKey]=not CFG[cfgKey]
+        btn.Text=label.." ["..(CFG[cfgKey] and "ON" or "OFF").."]"
+        saveCFG()
+        if behaviours[cfgKey] then behaviours[cfgKey](CFG[cfgKey]) end
+    end)
+    return btn
+end
+
+-- Build Main tab
+local y=8
+local openSHBtn=Instance.new("TextButton",mainPanel)
+openSHBtn.Size=UDim2.new(0.9,0,0,32); openSHBtn.Position=UDim2.new(0.05,0,0,y)
+openSHBtn.BackgroundColor3=Color3.fromRGB(60,20,100)
+Instance.new("UICorner",openSHBtn).CornerRadius=UDim.new(0,12)
+makeStroke(openSHBtn,ACC,1)
+openSHBtn.Font=Enum.Font.GothamBold; openSHBtn.TextSize=15; openSHBtn.TextColor3=Color3.new(1,1,1)
+openSHBtn.Text="Open Steal Helper"
+y=y+40
+local tAir=makeToggle(mainPanel,"Air Walk","AirWalk",y); y=y+40
+local tFloat=makeToggle(mainPanel,"Float v1","Float",y); y=y+40
+local tFloor=makeToggle(mainPanel,"Floor Steal","FloorSteal",y); y=y+40
+
+-- Visual tab toggles
+local vESP=makeToggle(visualPanel,"ESP Players","ESP",12)
+local vXray=makeToggle(visualPanel,"X-Ray","XRay",56)
+
+-- Steal Helper
+local helperFrame=Instance.new("Frame",screen); helperFrame.Name="StealHelper"; helperFrame.Size=UDim2.new(0,280,0,260); helperFrame.Position=UDim2.new(0.65,0,0.15,0)
+helperFrame.BackgroundColor3=BG
+Instance.new("UICorner",helperFrame).CornerRadius=UDim.new(0,12)
+makeStroke(helperFrame,ACC,1); helperFrame.Visible=false
+local shHeader=Instance.new("Frame",helperFrame); shHeader.Size=UDim2.new(1,0,0,36); shHeader.Position=UDim2.new(0,0,0,0); shHeader.BackgroundColor3=ACC
+Instance.new("UICorner",shHeader).CornerRadius=UDim.new(0,12)
+local shTitle=Instance.new("TextLabel",shHeader); shTitle.Size=UDim2.new(1,-36,1,0); shTitle.Position=UDim2.new(0,8,0,0)
+shTitle.BackgroundTransparency=1; shTitle.Font=Enum.Font.GothamBold; shTitle.TextSize=15; shTitle.TextColor3=Color3.new(1,1,1)
+shTitle.Text="Steal Helper"
+local shClose=Instance.new("TextButton",shHeader); shClose.Size=UDim2.new(0,32,1,0); shClose.Position=UDim2.new(1,-36,0,0); shClose.BackgroundTransparency=1; shClose.Text="✕"; shClose.Font=Enum.Font.GothamBold; shClose.TextSize=18; shClose.TextColor3=Color3.new(1,1,1)
+local shContent=Instance.new("Frame",helperFrame); shContent.Size=UDim2.new(1,0,1,-36); shContent.Position=UDim2.new(0,0,0,36); shContent.BackgroundTransparency=1
+local shAir=makeToggle(shContent,"Air Walk","AirWalk",8)
+local shFloat=makeToggle(shContent,"Float v1","Float",48)
+local shFloor=makeToggle(shContent,"Floor Steal","FloorSteal",88)
+
+-- Open/Close Steal Helper
+openSHBtn.MouseButton1Click:Connect(function() helperFrame.Visible=not helperFrame.Visible end)
+shClose.MouseButton1Click:Connect(function() helperFrame.Visible=false end)
+
+-- Draggable
+makeDraggable(main,header)
+makeDraggable(helperFrame,shHeader)
+
+-- Collapse menu
+local collapsed=false
+hideBtn.MouseButton1Click:Connect(function()
+    collapsed=not collapsed
+    content.Visible=not collapsed
+    tabs.Visible=not collapsed
+    main.Size=collapsed and UDim2.new(0,320,0,40) or UDim2.new(0,320,0,380)
+end)
+
+-- Tab switching
+btnMain.MouseButton1Click:Connect(function() mainPanel.Visible=true; visualPanel.Visible=false end)
+btnVisual.MouseButton1Click:Connect(function() mainPanel.Visible=false; visualPanel.Visible=true end)
+
+-- ===== Behaviours =====
+-- ESP
+local espFolder=Instance.new("Folder",Workspace); espFolder.Name="NexHubESP"
+behaviours.ESP=function(enabled)
+    if enabled then
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p~=LocalPlayer and p.Character and not espFolder:FindFirstChild(p.Name) then
+                pcall(function()
+                    local h=Instance.new("Highlight")
+                    h.Name=p.Name
+                    h.Adornee=p.Character
+                    h.FillTransparency=1
+                    h.OutlineTransparency=0
+                    h.OutlineColor=ACC
+                    h.Parent=espFolder
+                end)
+            end
+        end
+    else espFolder:ClearAllChildren() end
+end
+
+-- AirWalk
+local airPlatform=nil; local airConn=nil
+behaviours.AirWalk=function(enabled)
+    if enabled then
+        if not airPlatform then
+            airPlatform=Instance.new("Part",Workspace)
+            airPlatform.Name="Nex_AirPlatform"; airPlatform.Size=Vector3.new(6,0.8,6)
+            airPlatform.Anchored=true; airPlatform.CanCollide=true; airPlatform.Material=Enum.Material.Plastic; airPlatform.Color=ACC; airPlatform.Transparency=0.12
+        end
+        if airConn then airConn:Disconnect() end
+        airConn=RunService.RenderStepped:Connect(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local target=LocalPlayer.Character.HumanoidRootPart.Position-Vector3.new(0,3.6,0)
+                airPlatform.Position=airPlatform.Position:Lerp(target,0.25)
+            end
+        end)
+    else
+        if airConn then airConn:Disconnect(); airConn=nil end
+        if airPlatform then pcall(function() airPlatform:Destroy() end) end
+        airPlatform=nil
+    end
+end
+
+-- Float
+local floatConn=nil
+behaviours.Float=function(enabled)
+    if enabled then
+        if floatConn then floatConn:Disconnect() end
+        floatConn=RunService.RenderStepped:Connect(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local hrp=LocalPlayer.Character.HumanoidRootPart
+                local moveVec=Vector3.new(hrp.Velocity.X, -1.6, hrp.Velocity.Z)
+                hrp.Velocity=moveVec
+            end
+        end)
+    else if floatConn then floatConn:Disconnect(); floatConn=nil end end
+end
+
+-- Floor Steal
+local floorPlatform=nil
+local floorConn=nil
+behaviours.FloorSteal=function(enabled)
+    if enabled then
+        if not floorPlatform then
+            floorPlatform=Instance.new("Part",Workspace)
+            floorPlatform.Name="Nex_FloorPlatform"; floorPlatform.Size=Vector3.new(6,0.8,6)
+            floorPlatform.Anchored=true; floorPlatform.CanCollide=true
+            floorPlatform.Material=Enum.Material.Plastic; floorPlatform.Color=ACC; floorPlatform.Transparency=0.12
+        end
+        if floorConn then floorConn:Disconnect() end
+        floorConn=RunService.RenderStepped:Connect(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local hrp=LocalPlayer.Character.HumanoidRootPart
+                floorPlatform.Position=hrp.Position-Vector3.new(0,3,0)
+            end
+        end)
+    else
+        if floorConn then floorConn:Disconnect(); floorConn=nil end
+        if floorPlatform then pcall(function() floorPlatform:Destroy() end) end
+        floorPlatform=nil
+    end
+end
+
+-- XRay
+behaviours.XRay=function(enabled)
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character) then
+            pcall(function() obj.LocalTransparencyModifier=enabled and 0.7 or 0 end)
+        end
+    end
+end
+
+-- Main loop
+spawn(function()
+    while true do task.wait(0.5)
+        if CFG.ESP then behaviours.ESP(true) else behaviours.ESP(false) end
+        behaviours.AirWalk(CFG.AirWalk)
+        behaviours.Float(CFG.Float)
+        behaviours.FloorSteal(CFG.FloorSteal)
+        behaviours.XRay(CFG.XRay)
+    end
+end)
+
+-- Apply on startup
+for k,v in pairs(CFG) do if behaviours[k] then behaviours[k](v) end end
+
+-- Character respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.6)
+    for k,v in pairs(CFG) do if behaviours[k] then behaviours[k](v) end end
+end)
+
+-- Hotkeys
+UserInputService.InputBegan:Connect(function(input,gp)
+    if gp then return end
+    if input.KeyCode==Enum.KeyCode.RightShift then screen.Enabled=not screen.Enabled
+    elseif input.KeyCode==Enum.KeyCode.RightControl then helperFrame.Visible=not helperFrame.Visible end
+
+    -- Float на Z
+    if input.KeyCode == Enum.KeyCode.Z then
+        CFG.Float = not CFG.Float
+        behaviours.Float(CFG.Float)
+    end
+
+    -- Steal Helper на K
+    if input.KeyCode == Enum.KeyCode.K then
+        helperFrame.Visible = not helperFrame.Visible
+    end
+end)
+
+print("NexHub Full Mobile-Friendly Loaded ✅")
